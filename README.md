@@ -73,6 +73,36 @@ See [all flash helper options and build instructions](docs/flash-neopod.md).
 
 > **⚠️ macOS is alpha.** The macOS flasher and `.app` are implemented but have not been tested on real Mac hardware by the maintainer (no Mac available). Please report your results, with the saved log, in a GitHub issue — testers are very welcome. Windows remains the supported production path. **Download ready-to-test builds from the [macOS alpha release](https://github.com/danielNZ27/NeoPod-Fosi-DAP-Neo-Custom-Firmware/releases/tag/v1.8.2-macos-alpha.1), or rebuild them with the `Build macOS flasher` workflow under Actions.**
 
+### Rolling back to stock firmware on Linux
+
+The repo bundles FiiO's stock image for the DAP Neo at **`assets/DP3_V137.img`** (v1.3.7, sha256 `fcc1cd3e35b46f1f8dbcb8da39fcc5eb3f1d469cdfade5e9c6ea3bd71ac6deef`); a newer one can be downloaded from FiiO. The `flash-neo.py` helper has no Linux USB backend (Windows uses WinUSB, macOS uses libusb), so on Linux use the patched `rkdeveloptool` against the Rockchip recovery interface (`2207:262d`):
+
+1. Build the patched tool once:
+   ```sh
+   sudo apt install build-essential libusb-1.0-0-dev automake autoconf libtool pkgconf git
+   echo 'SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="262d", MODE="0666", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-rockchip.rules
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   echo -1 | sudo tee /sys/bus/usb/devices/*/power/autosuspend_delay_ms   # disable USB autosuspend
+   mkdir -p external && cd external
+   git clone https://github.com/rockchip-linux/rkdeveloptool.git
+   cd rkdeveloptool && git checkout 304f073752fd25c854e1bcf05d8e7f925b1f4e14
+   python3 ../../tools/patch_rkdeveloptool.py .
+   ./autogen.sh && ./configure && make
+   ```
+2. Enter recovery: unplug, press the **RST pinhole** once to power the player fully off, then hold **VOL +**, **VOL -** and **Center / OK** while plugging USB in; release after 3–5 s. The screen stays black.
+3. Verify the link, then write the stock image to both firmware slots (Neo slot 1 = sector 0, slot 2 = sector 30720), slot 2 first so one complete slot always exists, and read back to verify:
+   ```sh
+   ./rkdeveloptool ld && ./rkdeveloptool td          # ld: Maskrom, td: Test Device OK.
+   ./rkdeveloptool wl 30720 ../../assets/DP3_V137.img
+   ./rkdeveloptool wl 0     ../../assets/DP3_V137.img
+   ./rkdeveloptool rl 0 1 s1.bin && ./rkdeveloptool rl 30720 1 s2.bin
+   cmp s1.bin <(head -c 512 ../../assets/DP3_V137.img) && cmp s2.bin s1.bin && echo SLOTS-VERIFIED
+   ./rkdeveloptool rd                                # Reset Device OK.
+   ```
+4. Unplug and power on (if black: RST pinhole, wait 10 s, Power). Settings → About shows FiiO 1.3.7. The SD card and its `/.echo/` folder are untouched.
+
+Rules: never run `db`; never unplug during a `wl` (keep the battery charged and the laptop awake); if a command fails, the session is wedged — unplug, press RST, re-enter recovery and start from `ld`; if it fails twice the same way, try another port, cable or computer. Note the copy-the-`.IMG`-to-internal-storage rollback from the EchoPod guide does **not** apply to the Neo (its on-device updater only scans `HIFIECnn.IMG`): from NeoPod, the recovery flash above is the way back. If the player stops booting entirely, see [maskrom recovery](docs/device-recovery.md).
+
 ---
 
 ## 🎛️ Navigation & Controls
